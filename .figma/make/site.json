@@ -1,0 +1,13 @@
+{
+  "title": "SIKASA FEB (Sistem Informasi Keamanan Soal Akademik)",
+  "description": "SIKASA FEB — Sistem Informasi Keamanan Soal Akademik Fakultas Ekonomi dan Bisnis Universitas Singaperbangsa Karawang.",
+  "applicationName": "SIKASA FEB",
+  "language": "id",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}

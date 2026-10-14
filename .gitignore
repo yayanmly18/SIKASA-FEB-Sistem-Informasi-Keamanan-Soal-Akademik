@@ -1,0 +1,35 @@
+node_modules/
+dist/
+build/
+.cache/
+.env*
+.vite/
+*.tsbuildinfo
+*-debug.log*
+logs/
+*.log
+.claude-replay.*
+.tmp-*
+/.figma/design-context/
+
+# --- Berkas lokal developer, bukan bagian proyek ---
+/a.bat
+/runphp.bat
+/ver.bat
+/_tsc.ps1
+/cek_log.sql
+
+# Dump database berisi data nyata (akun, PIN cetak) — jangan di-commit ke
+# repo publik. Buat ulang dump skema bersih (tanpa INSERT) bila ingin
+# menjadikannya bagian dari repositori.
+/db/*.sql
+
+# Cache PHPUnit (Laravel)
+backend/.phpunit.result.cache
+
+# Platform-managed agentplat state, not project source. In the
+# client-initiated single-repo workspace layout (make's `Path: "."` spec) the
+# repo root IS the workspace root, so these land inside this repo rather than
+# beside it.
+/.plugins/
+/.opencode-skills/
