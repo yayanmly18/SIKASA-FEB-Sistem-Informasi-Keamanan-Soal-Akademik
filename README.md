@@ -450,10 +450,4 @@ Tersedia langsung di halaman login (lihat `demoCredentials` di `src/App.tsx`) da
 | Login gagal "Tidak dapat terhubung ke server" | Backend (`php artisan serve`) tidak jalan atau `API_BASE` di `src/db.ts` salah. |
 | Modal/kartu tampil aneh setelah pindah server | Jalankan ulang `pnpm dev` agar dev server memuat konfigurasi terbaru. |
 
-## Catatan Sebelum Upload ke GitHub
-
-- `backend/.env` (kredensial DB & `APP_KEY`), `backend/vendor/`, `node_modules/`, `dist/` sudah masuk `.gitignore`.
-- `db/*.sql` diabaikan — dump memuat data nyata (akun, PIN hash). Buat dump skema bersih (tanpa `INSERT`) bila ingin membagikan skema.
-- `backup/` (salinan cadangan lokal) juga sebaiknya tidak ikut ter-commit.
-- Ganti semua kredensial demo & `APP_KEY` sebelum dipakai produksi nyata.
 
