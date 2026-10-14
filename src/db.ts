@@ -981,9 +981,9 @@ export async function recordPrint(
   })
 }
 
-// Status printer asli (DB + deteksi Windows) untuk kartu "Printer tujuan".
-// Gagal dimuat (mis. peran bukan panitia) → kembalikan null agar UI jujur
-// menampilkan "Memeriksa..." bukan "Online & siap" palsu.
+// Status printer asli (DB + deteksi Windows) untuk pemilihan printer pada
+// modal cetak. Gagal dimuat (mis. peran bukan panitia) → kembalikan null agar
+// UI jujur menampilkan "Memeriksa..." bukan "Online & siap" palsu.
 export async function fetchPrinterStatus(): Promise<{
   utama: PrinterStatus | null
   semua: PrinterStatus[]
@@ -1004,6 +1004,118 @@ export async function fetchPrinterStatus(): Promise<{
   } catch {
     return null
   }
+}
+
+// --- Kelola Printer (halaman Admin IT) ---
+
+// Daftar printer lengkap untuk layar "Kelola Printer": alamat + status
+// Windows nyata + jumlah job tercatat.
+
+export interface PrinterAdmin {
+  id: number
+
+  nama_printer: string
+
+  alamat_printer: string
+
+  lokasi: string | null
+
+  status_db: string
+
+  ada_di_windows: boolean
+
+  offline: boolean
+
+  online: boolean
+
+  jumlah_cetak: number
+}
+
+export interface PrinterInput {
+  nama_printer: string
+
+  alamat_printer: string
+
+  lokasi: string
+}
+
+export async function fetchPrintersAdmin(): Promise<PrinterAdmin[]> {
+  const res = await apiFetch<{ data: PrinterAdmin[] }>("/printers")
+
+  return res.data ?? []
+}
+
+// Tambah printer (id kosong) atau ubah data printer (id terisi) — Admin IT.
+
+export async function savePrinter(
+  input: PrinterInput,
+
+  id?: number,
+): Promise<PrinterAdmin> {
+  const res = await apiFetch<{ data: PrinterAdmin }>(
+    id ? `/printers/${id}` : "/printers",
+    {
+      method: id ? "PUT" : "POST",
+
+      body: JSON.stringify(input),
+    },
+  )
+
+  return res.data
+}
+
+// Aktif/nonaktifkan printer. Printer aktif dipakai sebagai tujuan cetak
+
+// bila petugas tidak memilih printer secara spesifik.
+
+export async function togglePrinter(id: number): Promise<PrinterAdmin> {
+  const res = await apiFetch<{ data: PrinterAdmin }>(`/printers/${id}/toggle`, {
+    method: "PATCH",
+  })
+
+  return res.data
+}
+
+// Hapus printer. Backend menolak bila sudah ada riwayat cetak tercatat.
+
+export async function deletePrinter(id: number): Promise<void> {
+  await apiFetch<{ message: string }>(`/printers/${id}`, {
+    method: "DELETE",
+  })
+}
+
+// Hasil scan printer Windows Server (USB & jaringan) untuk layar Kelola
+// Printer: nama asli di OS + pencocokan otomatis dengan database.
+
+export interface PrinterScan {
+  nama_windows: string
+
+  port: string | null
+
+  default: boolean
+
+  offline: boolean
+
+  sudah_terdaftar: boolean
+
+  nama_persis: boolean
+
+  printer_id: number | null
+}
+
+// Scan otomatis printer yang dikenal Windows Server. serverWindows=false
+// berarti backend tidak berjalan di Windows sehingga scan tidak tersedia.
+
+export async function scanPrinters(): Promise<{
+  serverWindows: boolean
+
+  daftar: PrinterScan[]
+}> {
+  const res = await apiFetch<{ data: PrinterScan[]; server_windows: boolean }>(
+    "/printers/scan",
+  )
+
+  return { serverWindows: res.server_windows, daftar: res.data ?? [] }
 }
 
 // Tambah pengguna (Kaprodi/Admin IT). Backend mewajibkan password awal

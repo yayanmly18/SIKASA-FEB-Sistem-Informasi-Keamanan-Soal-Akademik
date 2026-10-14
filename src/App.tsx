@@ -23,9 +23,11 @@ import {
   createMataKuliah,
   decideRevisi,
   deleteMataKuliah,
+  deletePrinter,
   emptyDatabase,
   exportBeritaAcara,
   fetchNotifikasi,
+  fetchPrintersAdmin,
   fetchPrinterStatus,
   findUser,
   formatJam,
@@ -41,9 +43,12 @@ import {
   resetUserPassword,
   resetUserPin,
   roleLabel,
+  savePrinter,
+  scanPrinters,
   sendPengingat,
   toExamViews,
   toLogRows,
+  togglePrinter,
   toggleUser,
   updateMataKuliah,
   updateUser,
@@ -54,6 +59,8 @@ import {
   type MataKuliah,
   type MataKuliahInput,
   type Notifikasi,
+  type PrinterAdmin,
+  type PrinterScan,
   type PrinterStatus,
   type PrintResult,
   type RekapRow,
@@ -606,85 +613,6 @@ function StatCard({
         <span className="size-1.5 rounded-full bg-emerald-500" />
         {detail}
       </p>
-    </div>
-  )
-}
-
-// Kartu "Printer tujuan" Panitia — membaca status printer ASLI dari backend
-// (DB + deteksi Windows), bukan teks hardcode. Hijau = online, kuning =
-// memeriksa, merah = offline/tidak terdaftar di Windows.
-function PrinterTujuanCard() {
-  const [info, setInfo] = useState<{
-    utama: PrinterStatus | null
-    printCommandAktif: boolean
-  } | null>(null)
-  const [gagal, setGagal] = useState(false)
-
-  useEffect(() => {
-    let aktif = true
-    fetchPrinterStatus()
-      .then((res) => {
-        if (aktif) {
-          if (res)
-            setInfo({
-              utama: res.utama,
-              printCommandAktif: res.printCommandAktif,
-            })
-          else setGagal(true)
-        }
-      })
-      .catch(() => {
-        if (aktif) setGagal(true)
-      })
-    return () => {
-      aktif = false
-    }
-  }, [])
-
-  const utama = info?.utama ?? null
-  const online = utama?.online ?? false
-  const dot =
-    !info && !gagal ? "bg-amber-400" : online ? "bg-emerald-400" : "bg-rose-400"
-  const statusText =
-    !info && !gagal
-      ? "Memeriksa..."
-      : gagal || !utama
-        ? "Tidak terjangkau"
-        : online
-          ? "Online & siap"
-          : utama.ada_di_windows
-            ? "Terdaftar, sedang offline"
-            : "Tidak terdaftar di server"
-
-  return (
-    <div className="flex shrink-0 items-center gap-3 rounded-2xl bg-[#f4f1ea] p-4">
-      <div className="grid size-11 place-items-center rounded-xl bg-[#202126] text-[#f5cf25]">
-        <Icon name="printer" size={22} />
-      </div>
-      <div>
-        <div className="text-xs text-slate-400">Printer tujuan</div>
-        <div className="mt-0.5 text-sm font-bold">
-          {utama?.nama_printer ?? "Belum dikonfigurasi"}
-        </div>
-        <div className="mt-1 flex items-center gap-1.5 text-[10px] text-emerald-300">
-          <span className={`size-1.5 rounded-full ${dot}`} /> {statusText}
-        </div>
-        {utama && !online && (
-          <div className="mt-1 max-w-[220px] text-[10px] leading-relaxed text-amber-700">
-            {utama.status_db !== "aktif"
-              ? "Printer nonaktif di database. Minta Admin IT mengaktifkan."
-              : !utama.ada_di_windows
-                ? "Nama tidak cocok dengan printer Windows server. Minta Admin IT menyamakan nama."
-                : "Printer offline di Windows. Nyalakan printer / cek kabel & jaringan."}
-          </div>
-        )}
-        {utama && online && !info?.printCommandAktif && (
-          <div className="mt-1 max-w-[220px] text-[10px] leading-relaxed text-amber-700">
-            Mode spool: PDF tersimpan di server, belum diteruskan otomatis ke
-            printer fisik.
-          </div>
-        )}
-      </div>
     </div>
   )
 }
@@ -3630,6 +3558,530 @@ function RevisionPage({ showToast }: { showToast: (message: string) => void }) {
   )
 }
 
+// Pengaturan printer di halaman Admin IT: tambah, ubah (mis. menyamakan
+// nama dengan Windows), aktif/nonaktifkan, dan hapus. Nama printer disarankan
+// sama persis dengan yang terdaftar di Windows Server agar deteksi status dan
+// pengiriman file job akurat.
+function KelolaPrinterSection({
+  showToast,
+}: {
+  showToast: (message: string) => void
+}) {
+  const [printers, setPrinters] = useState<PrinterAdmin[]>([])
+  const [memuat, setMemuat] = useState(true)
+  const [adding, setAdding] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [busyId, setBusyId] = useState<number | null>(null)
+
+  // Form tambah printer.
+  const [nama, setNama] = useState("")
+  const [alamat, setAlamat] = useState("")
+  const [lokasi, setLokasi] = useState("")
+
+  // Form edit printer.
+  const [editing, setEditing] = useState<PrinterAdmin | null>(null)
+  const [editNama, setEditNama] = useState("")
+  const [editAlamat, setEditAlamat] = useState("")
+  const [editLokasi, setEditLokasi] = useState("")
+
+  // Hasil scan otomatis printer Windows Server (USB & jaringan).
+  const [scanHasil, setScanHasil] = useState<PrinterScan[] | null>(null)
+  const [scanWindows, setScanWindows] = useState(true)
+  const [scanning, setScanning] = useState(false)
+  const [busyScan, setBusyScan] = useState<string | null>(null)
+
+  const muat = async () => {
+    try {
+      setPrinters(await fetchPrintersAdmin())
+    } catch (error) {
+      showToast(
+        error instanceof Error ? error.message : "Gagal memuat daftar printer.",
+      )
+    } finally {
+      setMemuat(false)
+    }
+  }
+
+  useEffect(() => {
+    void muat()
+  }, [])
+
+  const startEdit = (printer: PrinterAdmin) => {
+    setEditing(printer)
+    setEditNama(printer.nama_printer)
+    setEditAlamat(printer.alamat_printer)
+    setEditLokasi(printer.lokasi ?? "")
+  }
+
+  const handleTambah = async () => {
+    if (!nama.trim() || !alamat.trim())
+      return showToast("Nama dan alamat printer wajib diisi.")
+    setSaving(true)
+    try {
+      await savePrinter({
+        nama_printer: nama.trim(),
+        alamat_printer: alamat.trim(),
+        lokasi: lokasi.trim(),
+      })
+      setNama("")
+      setAlamat("")
+      setLokasi("")
+      setAdding(false)
+      await muat()
+      showToast("Printer ditambahkan.")
+    } catch (error) {
+      showToast(
+        error instanceof Error ? error.message : "Gagal menambahkan printer.",
+      )
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleSimpanEdit = async () => {
+    if (!editing) return
+    if (!editNama.trim() || !editAlamat.trim())
+      return showToast("Nama dan alamat printer wajib diisi.")
+    setBusyId(editing.id)
+    try {
+      await savePrinter(
+        {
+          nama_printer: editNama.trim(),
+          alamat_printer: editAlamat.trim(),
+          lokasi: editLokasi.trim(),
+        },
+        editing.id,
+      )
+      setEditing(null)
+      await muat()
+      showToast(`Printer ${editNama.trim()} diperbarui.`)
+    } catch (error) {
+      showToast(
+        error instanceof Error ? error.message : "Gagal memperbarui printer.",
+      )
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  const handleToggle = async (printer: PrinterAdmin) => {
+    setBusyId(printer.id)
+    try {
+      const updated = await togglePrinter(printer.id)
+      await muat()
+      showToast(
+        updated.status_db === "aktif"
+          ? `${printer.nama_printer} diaktifkan.`
+          : `${printer.nama_printer} dinonaktifkan.`,
+      )
+    } catch (error) {
+      showToast(
+        error instanceof Error ? error.message : "Gagal mengubah status.",
+      )
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  const handleHapus = async (printer: PrinterAdmin) => {
+    if (!window.confirm(`Hapus printer "${printer.nama_printer}"?`)) return
+    setBusyId(printer.id)
+    try {
+      await deletePrinter(printer.id)
+      await muat()
+      showToast(`Printer ${printer.nama_printer} dihapus.`)
+    } catch (error) {
+      showToast(
+        error instanceof Error ? error.message : "Gagal menghapus printer.",
+      )
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  const handleScan = async () => {
+    setScanning(true)
+    try {
+      const res = await scanPrinters()
+      setScanHasil(res.daftar)
+      setScanWindows(res.serverWindows)
+    } catch (error) {
+      showToast(
+        error instanceof Error ? error.message : "Gagal melakukan scan printer.",
+      )
+    } finally {
+      setScanning(false)
+    }
+  }
+
+  // Daftarkan printer hasil scan yang belum ada di database.
+  const handleDaftarkan = async (p: PrinterScan) => {
+    setBusyScan(p.nama_windows)
+    try {
+      await savePrinter({
+        nama_printer: p.nama_windows,
+        alamat_printer: p.nama_windows,
+        lokasi: "",
+      })
+      await muat()
+      await handleScan()
+      showToast(`Printer ${p.nama_windows} terdaftar.`)
+    } catch (error) {
+      showToast(
+        error instanceof Error ? error.message : "Gagal mendaftarkan printer.",
+      )
+    } finally {
+      setBusyScan(null)
+    }
+  }
+
+  // Samakan nama di database dengan nama asli di Windows — memperbaiki status
+  // "Tidak terdaftar di Windows" tanpa perlu mengetik ulang nama.
+  const handleSamakanNama = async (p: PrinterScan) => {
+    if (p.printer_id == null) return
+    const printerDb = printers.find((item) => item.id === p.printer_id)
+    if (!printerDb) return
+    setBusyScan(p.nama_windows)
+    try {
+      await savePrinter(
+        {
+          nama_printer: p.nama_windows,
+          alamat_printer: printerDb.alamat_printer,
+          lokasi: printerDb.lokasi ?? "",
+        },
+        p.printer_id,
+      )
+      await muat()
+      await handleScan()
+      showToast(`Nama printer disamakan dengan Windows: ${p.nama_windows}.`)
+    } catch (error) {
+      showToast(
+        error instanceof Error ? error.message : "Gagal menyamakan nama.",
+      )
+    } finally {
+      setBusyScan(null)
+    }
+  }
+
+  // Badge status: hasil deteksi Windows Server yang sebenarnya.
+  const statusBadge = (printer: PrinterAdmin) =>
+    printer.status_db !== "aktif"
+      ? { kelas: "bg-slate-100 text-slate-500", teks: "Nonaktif" }
+      : printer.online
+        ? { kelas: "bg-emerald-50 text-emerald-700", teks: "Online" }
+        : printer.ada_di_windows
+          ? { kelas: "bg-amber-50 text-amber-700", teks: "Terdaftar, offline" }
+          : {
+              kelas: "bg-rose-50 text-rose-700",
+              teks: "Tidak terdaftar di Windows",
+            }
+
+  const inputKelas =
+    "w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-sm outline-none transition focus:border-slate-900"
+
+  return (
+    <section className="mt-6 overflow-hidden rounded-2xl border border-slate-200/80 bg-white">
+      <div className="flex flex-col justify-between gap-4 border-b border-slate-100 p-6 sm:flex-row sm:items-center">
+        <div>
+          <div className="font-display text-lg font-bold text-slate-900">
+            Kelola Printer
+          </div>
+          <p className="mt-1 max-w-2xl text-xs leading-relaxed text-slate-400">
+            Nama printer harus{" "}
+            <strong className="text-slate-600">sama persis</strong> dengan yang
+            terdaftar di Windows Server (Panel Control → Devices and Printers)
+            agar status online dan pengiriman file akurat. Printer aktif dipakai
+            sebagai tujuan bila petugas cetak tidak memilih secara spesifik.
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <button
+            className="flex items-center justify-center gap-2 rounded-xl border border-slate-200 px-5 py-3 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-40"
+            disabled={scanning}
+            onClick={() => void handleScan()}
+          >
+            <Icon name="search" size={17} />{" "}
+            {scanning ? "Memindai..." : "Scan Printer Windows"}
+          </button>
+          <button
+            className="flex items-center justify-center gap-2 rounded-xl bg-[#202126] px-5 py-3 text-xs font-bold text-white"
+            onClick={() => setAdding((value) => !value)}
+          >
+            <Icon name="printer" size={17} /> Tambah Printer
+          </button>
+        </div>
+      </div>
+
+      {scanHasil && (
+        <div className="border-b border-slate-100 bg-[#f8f7f2] p-6">
+          <div className="flex items-center justify-between">
+            <div className="text-xs font-bold text-slate-700">
+              Hasil scan printer Windows Server
+            </div>
+            <div className="flex gap-2">
+              <button
+                className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-40"
+                disabled={scanning}
+                onClick={() => void handleScan()}
+              >
+                {scanning ? "Memindai..." : "Scan Ulang"}
+              </button>
+              <button
+                className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-bold text-slate-600 hover:bg-slate-50"
+                onClick={() => setScanHasil(null)}
+              >
+                Tutup
+              </button>
+            </div>
+          </div>
+          {!scanWindows ? (
+            <p className="mt-3 text-xs leading-relaxed text-slate-500">
+              Backend tidak berjalan di Windows sehingga scan otomatis tidak
+              tersedia. Tambahkan nama printer secara manual (nama harus sama
+              persis dengan yang terdaftar di mesin server).
+            </p>
+          ) : scanHasil.length === 0 ? (
+            <p className="mt-3 text-xs text-slate-500">
+              Tidak ada printer terdeteksi di Windows. Pasang driver printer
+              (USB/jaringan) di server lalu lakukan scan ulang.
+            </p>
+          ) : (
+            <div className="mt-3 divide-y divide-slate-200/70 rounded-xl border border-slate-200/70 bg-white">
+              {scanHasil.map((p) => (
+                <div
+                  className="flex flex-col gap-2 p-3.5 sm:flex-row sm:items-center sm:justify-between"
+                  key={p.nama_windows}
+                >
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-sm font-bold text-slate-700">
+                        {p.nama_windows}
+                      </span>
+                      {p.default && (
+                        <span className="rounded-full bg-[#f5cf25]/30 px-2 py-0.5 text-[10px] font-bold text-[#8a6d0b]">
+                          Default Windows
+                        </span>
+                      )}
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                          p.offline
+                            ? "bg-amber-50 text-amber-700"
+                            : "bg-emerald-50 text-emerald-700"
+                        }`}
+                      >
+                        {p.offline ? "Offline" : "Siap"}
+                      </span>
+                    </div>
+                    <div className="mt-0.5 text-[11px] text-slate-400">
+                      Port: {p.port ?? "-"}
+                      {p.sudah_terdaftar
+                        ? p.nama_persis
+                          ? " · Sudah terdaftar di database"
+                          : " · Cocok dengan database (nama belum persis)"
+                        : " · Belum terdaftar di database"}
+                    </div>
+                  </div>
+                  <div>
+                    {!p.sudah_terdaftar ? (
+                      <button
+                        className="rounded-lg bg-[#202126] px-3.5 py-2 text-[11px] font-bold text-white disabled:opacity-40"
+                        disabled={busyScan === p.nama_windows}
+                        onClick={() => void handleDaftarkan(p)}
+                      >
+                        {busyScan === p.nama_windows
+                          ? "Mendaftarkan..."
+                          : "Daftarkan"}
+                      </button>
+                    ) : !p.nama_persis ? (
+                      <button
+                        className="rounded-lg border border-amber-300 bg-amber-50 px-3.5 py-2 text-[11px] font-bold text-amber-800 disabled:opacity-40"
+                        disabled={busyScan === p.nama_windows}
+                        onClick={() => void handleSamakanNama(p)}
+                      >
+                        {busyScan === p.nama_windows
+                          ? "Menyamakan..."
+                          : "Samakan nama"}
+                      </button>
+                    ) : (
+                      <span className="text-[11px] font-bold text-emerald-600">
+                        ✓ Terdaftar
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {adding && (
+        <div className="border-b border-slate-100 bg-slate-50/70 p-6">
+          <div className="grid gap-3 sm:grid-cols-3">
+            <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500">
+              Nama printer (persis seperti di Windows)
+              <input
+                className={`mt-1.5 ${inputKelas}`}
+                onChange={(event) => setNama(event.target.value)}
+                placeholder="HP LaserJet Ruang Kaprodi"
+                value={nama}
+              />
+            </label>
+            <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500">
+              Alamat printer
+              <input
+                className={`mt-1.5 ${inputKelas}`}
+                onChange={(event) => setAlamat(event.target.value)}
+                placeholder="socket://192.168.1.50:9100"
+                value={alamat}
+              />
+            </label>
+            <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500">
+              Lokasi (opsional)
+              <input
+                className={`mt-1.5 ${inputKelas}`}
+                onChange={(event) => setLokasi(event.target.value)}
+                placeholder="Ruang Kaprodi Manajemen"
+                value={lokasi}
+              />
+            </label>
+          </div>
+          <div className="mt-4 flex gap-2">
+            <button
+              className="rounded-xl bg-[#202126] px-5 py-2.5 text-xs font-bold text-white disabled:opacity-40"
+              disabled={saving}
+              onClick={() => void handleTambah()}
+            >
+              {saving ? "Menyimpan..." : "Simpan Printer"}
+            </button>
+            <button
+              className="rounded-xl border border-slate-200 px-5 py-2.5 text-xs font-bold text-slate-600"
+              onClick={() => setAdding(false)}
+            >
+              Batal
+            </button>
+          </div>
+        </div>
+      )}
+
+      {editing && (
+        <div className="border-b border-slate-100 bg-amber-50/50 p-6">
+          <div className="text-xs font-bold text-slate-700">
+            Edit printer: {editing.nama_printer}
+          </div>
+          <div className="mt-3 grid gap-3 sm:grid-cols-3">
+            <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500">
+              Nama printer (persis seperti di Windows)
+              <input
+                className={`mt-1.5 ${inputKelas}`}
+                onChange={(event) => setEditNama(event.target.value)}
+                value={editNama}
+              />
+            </label>
+            <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500">
+              Alamat printer
+              <input
+                className={`mt-1.5 ${inputKelas}`}
+                onChange={(event) => setEditAlamat(event.target.value)}
+                value={editAlamat}
+              />
+            </label>
+            <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500">
+              Lokasi (opsional)
+              <input
+                className={`mt-1.5 ${inputKelas}`}
+                onChange={(event) => setEditLokasi(event.target.value)}
+                value={editLokasi}
+              />
+            </label>
+          </div>
+          <div className="mt-4 flex gap-2">
+            <button
+              className="rounded-xl bg-[#202126] px-5 py-2.5 text-xs font-bold text-white disabled:opacity-40"
+              disabled={busyId === editing.id}
+              onClick={() => void handleSimpanEdit()}
+            >
+              {busyId === editing.id ? "Menyimpan..." : "Simpan Perubahan"}
+            </button>
+            <button
+              className="rounded-xl border border-slate-200 px-5 py-2.5 text-xs font-bold text-slate-600"
+              onClick={() => setEditing(null)}
+            >
+              Batal
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="divide-y divide-slate-100">
+        {memuat ? (
+          <p className="p-6 text-sm text-slate-400">Memuat daftar printer...</p>
+        ) : printers.length === 0 ? (
+          <p className="p-6 text-sm text-slate-400">
+            Belum ada printer terdaftar. Tambahkan printer agar panitia bisa
+            memilih tujuan cetak.
+          </p>
+        ) : (
+          printers.map((printer) => {
+            const badge = statusBadge(printer)
+            return (
+              <div
+                className="grid gap-3 p-5 sm:grid-cols-[1fr_auto] sm:items-center"
+                key={printer.id}
+              >
+                <div className="flex items-start gap-3">
+                  <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-[#f4f1ea] text-[#202126]">
+                    <Icon name="printer" size={17} />
+                  </span>
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-sm font-bold text-slate-700">
+                        {printer.nama_printer}
+                      </span>
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${badge.kelas}`}
+                      >
+                        {badge.teks}
+                      </span>
+                    </div>
+                    <div className="mt-0.5 text-[11px] text-slate-400">
+                      {printer.alamat_printer}
+                      {printer.lokasi ? ` · ${printer.lokasi}` : ""} ·{" "}
+                      {printer.jumlah_cetak} job tercatat
+                    </div>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    className="rounded-lg border border-slate-200 px-3 py-2 text-[11px] font-bold text-slate-600 hover:bg-slate-50"
+                    onClick={() => startEdit(printer)}
+                  >
+                    Edit
+                  </button>
+                  <button
+                    className="rounded-lg border border-slate-200 px-3 py-2 text-[11px] font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-40"
+                    disabled={busyId === printer.id}
+                    onClick={() => void handleToggle(printer)}
+                  >
+                    {printer.status_db === "aktif" ? "Nonaktifkan" : "Aktifkan"}
+                  </button>
+                  <button
+                    className="rounded-lg border border-rose-200 px-3 py-2 text-[11px] font-bold text-rose-600 hover:bg-rose-50 disabled:opacity-40"
+                    disabled={busyId === printer.id}
+                    onClick={() => void handleHapus(printer)}
+                  >
+                    Hapus
+                  </button>
+                </div>
+              </div>
+            )
+          })
+        )}
+      </div>
+    </section>
+  )
+}
+
 function ServerPage({ showToast }: { showToast: (message: string) => void }) {
   const services = [
     ["Application Server", "192.168.1.10", "Aktif", "12 ms"],
@@ -3651,6 +4103,7 @@ function ServerPage({ showToast }: { showToast: (message: string) => void }) {
           </div>
         </div>
       </div>
+      <KelolaPrinterSection showToast={showToast} />
       <section className="mt-6 grid gap-4 sm:grid-cols-3">
         <StatCard
           detail="Berjalan normal"
@@ -4304,7 +4757,6 @@ function AppShell() {
                       sesuai dengan peserta terdaftar.
                     </p>
                   </div>
-                  <PrinterTujuanCard />
                 </div>
               </section>
               <section className="mb-6 grid gap-3 md:grid-cols-3">

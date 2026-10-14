@@ -67,6 +67,16 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/printer-status', [PrinterController::class, 'status']);
     });
 
+    // --- Manajemen Printer (khusus Admin IT) ---
+    Route::middleware('role:admin_it')->group(function () {
+        Route::get('/printers', [PrinterController::class, 'index']);
+        Route::get('/printers/scan', [PrinterController::class, 'scan']);
+        Route::post('/printers', [PrinterController::class, 'store']);
+        Route::put('/printers/{id}', [PrinterController::class, 'update']);
+        Route::patch('/printers/{id}/toggle', [PrinterController::class, 'toggle']);
+        Route::delete('/printers/{id}', [PrinterController::class, 'destroy']);
+    });
+
     // --- Log aktivitas (semua peran melihat miliknya sesuai controller) ---
     Route::get('/log/aktivitas', [LogController::class, 'aktivitas']);
 
