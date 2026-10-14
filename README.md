@@ -87,6 +87,3 @@ Empat akun demo tersedia langsung di halaman login (lihat `demoCredentials` di `
 - `backend/vendor/` dan `node_modules/` diabaikan Git; pasang ulang lewat `composer install` / `pnpm install`.
 - File `db/*.sql` diabaikan karena dapat berisi data nyata (akun, PIN cetak). Buat dump skema bersih (tanpa `INSERT`) bila ingin membagikan skema database.
 
-## Lisensi
-
-Proyek tugas akhir — gunakan sesuai kebijakan institusi.
