@@ -457,18 +457,3 @@ Tersedia langsung di halaman login (lihat `demoCredentials` di `src/App.tsx`) da
 - `backup/` (salinan cadangan lokal) juga sebaiknya tidak ikut ter-commit.
 - Ganti semua kredensial demo & `APP_KEY` sebelum dipakai produksi nyata.
 
-<<<<<<< HEAD
-=======
-## Lisensi
-
-Proyek tugas akhir — gunakan sesuai kebijakan institusi.
-
-
-
-
-
-
-
-
-
->>>>>>> 25722f7 (readme update)
